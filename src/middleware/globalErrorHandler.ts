@@ -1,16 +1,55 @@
-export class CustomError extends Error {
-  // all custom errors will extend this class
-  statusCode: number;
-  status: string;
-  errorCode?: string;
-  isOperational: boolean;
-  constructor(message: string, statusCode = 500, errorCode?: string) {
-    super(message);
-    this.statusCode = statusCode;
-    this.status = statusCode >= 400 && statusCode < 500 ? "fail" : "error";
-    this.errorCode = errorCode;
-    this.isOperational = true;
+import type { NextFunction, Request, Response } from "express";
+import { CustomError } from "../utils/error/customError";
+import {
+  castErrorHandler,
+  duplicateKeyErrorHandler,
+  validationErrorHandler,
+} from "../utils/error/handleError";
 
-    Error.captureStackTrace(this, this.constructor);
+const errorResponse = (error: CustomError, res: Response) => {
+  res.status(error.statusCode).json({
+    status: error.status,
+    statusCode: error.statusCode,
+    message: error.message,
+    errorCode: error.errorCode,
+  });
+};
+
+export const globalErrorHandler = (
+  error: any,
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+) => {
+  console.log(error);
+
+  if (error instanceof CustomError) {
+    errorResponse(error, res);
+    return;
   }
-}
+
+  if (error.name === "CastError") {
+    const castError = castErrorHandler(error);
+    errorResponse(castError, res);
+    return;
+  }
+
+  if (error.code === 11000) {
+    const duplicateKeyError = duplicateKeyErrorHandler(error);
+    errorResponse(duplicateKeyError, res);
+    return;
+  }
+
+  if (error.name === "ValidationError") {
+    const validationError = validationErrorHandler(error);
+    errorResponse(validationError, res);
+    return;
+  }
+
+  // default error if none of the above match
+  res.status(500).json({
+    status: "fail",
+    statusCode: 500,
+    message: error?.message || "Something went wrong",
+  });
+};
