@@ -13,8 +13,7 @@ export const registerWithEmail = async (req: Request, res: Response) => {
   const { name, email, password } = req.body;
 
   const existingUser = await EmailUser.findOne({ email });
-  if (existingUser)
-    throw new CustomError("Email already exists, Please login", 400);
+  if (existingUser) throw new CustomError("Email registerd, Please login", 400);
 
   const hashedPassword = await bcrypt.hash(password, 10);
   const otp = generateOTP();
