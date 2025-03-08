@@ -9,6 +9,7 @@ interface IEmailUser extends mongoose.Document {
   isVerified: boolean;
   isBlocked: boolean;
   isDeleted: boolean;
+  refreshToken?: string;
 }
 
 const emailUserSchema = new mongoose.Schema(
@@ -21,6 +22,7 @@ const emailUserSchema = new mongoose.Schema(
     isVerified: { type: Boolean, default: false },
     isBlocked: { type: Boolean, default: false },
     isDeleted: { type: Boolean, default: false },
+    refreshToken: { type: String },
   },
   { timestamps: true }
 );

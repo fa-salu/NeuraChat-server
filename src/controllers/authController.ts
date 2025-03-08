@@ -9,6 +9,43 @@ import { generateOTP, transporter } from "../services/emailAuthService";
 
 dotenv.config();
 
+const generateTokens = (user: any) => {
+  const accessToken = jwt.sign(
+    { userId: user._id, email: user.email },
+    process.env.JWT_SECRET || "",
+    { expiresIn: "15m" }
+  );
+
+  const refreshToken = jwt.sign(
+    { userId: user._id },
+    process.env.REFRESH_TOKEN_SECRET || "",
+    { expiresIn: "7d" }
+  );
+
+  return { accessToken, refreshToken };
+};
+
+const setTokenCookies = (
+  res: Response,
+  accessToken: string,
+  refreshToken: string
+) => {
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 15 * 60 * 1000,
+  });
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: "/api/auth/refresh",
+  });
+};
+
 export const registerWithEmail = async (req: Request, res: Response) => {
   const { name, email, password } = req.body;
 
@@ -79,17 +116,21 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
   user.isVerified = true;
   user.otp = undefined;
   user.otpExpiry = undefined;
+
+  const { accessToken, refreshToken } = generateTokens(user);
+
+  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+  user.refreshToken = refreshTokenHash;
   await user.save();
 
-  const token = jwt.sign(
-    { userId: user._id, email: user.email },
-    process.env.JWT_SECRET || "",
-    { expiresIn: "7d" }
-  );
+  setTokenCookies(res, accessToken, refreshToken);
 
   const response = {
-    token,
-    user,
+    user: {
+      _id: user._id,
+      email: user.email,
+      isVerified: user.isVerified,
+    },
   };
 
   res
@@ -140,20 +181,103 @@ export const login = async (req: Request, res: Response) => {
 
   const user = await EmailUser.findOne({ email });
   if (!user) throw new CustomError("User not found", 404);
+  if (!user.isVerified) throw new CustomError("Email not verified", 401);
 
   const isValidPassword = await bcrypt.compare(password, user.password);
   if (!isValidPassword) throw new CustomError("Invalid password", 400);
 
-  const token = jwt.sign(
-    { userId: user._id, email: user.email },
-    process.env.JWT_SECRET || "",
-    { expiresIn: "7d" }
-  );
+  const { accessToken, refreshToken } = generateTokens(user);
+
+  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+  user.refreshToken = refreshTokenHash;
+  await user.save();
+
+  setTokenCookies(res, accessToken, refreshToken);
 
   const response = {
-    token,
-    user,
+    user: {
+      _id: user._id,
+      email: user.email,
+      isVerified: user.isVerified,
+    },
   };
 
   res.status(200).json(new StandardResponse("Login successful", response));
+};
+
+export const refreshToken = async (req: Request, res: Response) => {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (!refreshToken) {
+    throw new CustomError("Refresh token not found", 401);
+  }
+
+  try {
+    const decoded = jwt.verify(
+      refreshToken,
+      process.env.REFRESH_TOKEN_SECRET || ""
+    ) as jwt.JwtPayload;
+
+    const user = await EmailUser.findById(decoded.userId);
+    if (!user) {
+      throw new CustomError("User not found", 404);
+    }
+
+    const isValidRefreshToken = await bcrypt.compare(
+      refreshToken,
+      user.refreshToken || ""
+    );
+    if (!isValidRefreshToken) {
+      throw new CustomError("Invalid refresh token", 401);
+    }
+
+    const tokens = generateTokens(user);
+
+    const newRefreshTokenHash = await bcrypt.hash(tokens.refreshToken, 10);
+    user.refreshToken = newRefreshTokenHash;
+    await user.save();
+
+    setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
+
+    res
+      .status(200)
+      .json(new StandardResponse("Token refreshed successfully", {}));
+  } catch (error) {
+    res.cookie("accessToken", "", { maxAge: 0 });
+    res.cookie("refreshToken", "", { maxAge: 0 });
+
+    if (error instanceof jwt.JsonWebTokenError) {
+      throw new CustomError("Invalid or expired refresh token", 401);
+    }
+    throw error;
+  }
+};
+
+export const logout = async (req: Request, res: Response) => {
+  try {
+    const accessToken = req.cookies.accessToken;
+    if (accessToken) {
+      try {
+        const decoded = jwt.verify(
+          accessToken,
+          process.env.JWT_SECRET || ""
+        ) as jwt.JwtPayload;
+
+        const user = await EmailUser.findById(decoded.userId);
+        if (user) {
+          user.refreshToken = undefined;
+          await user.save();
+        }
+      } catch (error) {
+        console.log("Token verification failed during logout");
+      }
+    }
+
+    res.cookie("accessToken", "", { maxAge: 0 });
+    res.cookie("refreshToken", "", { maxAge: 0, path: "/api/auth/refresh" });
+
+    res.status(200).json(new StandardResponse("Logged out successfully", {}));
+  } catch (error) {
+    throw new CustomError("Logout failed", 500);
+  }
 };
