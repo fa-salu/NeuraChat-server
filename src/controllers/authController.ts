@@ -93,6 +93,7 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
   const response = {
     user: {
       _id: user._id,
+      name: user.name,
       email: user.email,
       isVerified: user.isVerified,
     },
@@ -150,6 +151,7 @@ export const login = async (req: Request, res: Response) => {
   const response = {
     user: {
       _id: user._id,
+      name: user.name,
       email: user.email,
       isVerified: user.isVerified,
     },
