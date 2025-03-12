@@ -6,6 +6,7 @@ import {
   resendOtp,
   refreshToken,
   logout,
+  getUser,
 } from "../controllers/authController";
 import { errorCatch } from "../utils/error/errorCatch";
 
@@ -17,5 +18,6 @@ router.post("/login", errorCatch(login));
 router.post("/resentotp", errorCatch(resendOtp));
 router.post("/refresh", errorCatch(refreshToken));
 router.post("/logout", errorCatch(logout));
+router.get("/me", errorCatch(getUser));
 
 export default router;
