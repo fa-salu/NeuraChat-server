@@ -4,6 +4,7 @@ interface IEmailUser extends mongoose.Document {
   name: string;
   email: string;
   password: string;
+  image?: string;
   otp?: string;
   otpExpiry?: Date;
   isVerified: boolean;
@@ -17,6 +18,7 @@ const emailUserSchema = new mongoose.Schema(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
+    image: { type: String, default: "" },
     otp: { type: String },
     otpExpiry: { type: Date },
     isVerified: { type: Boolean, default: false },

@@ -1,56 +1,20 @@
-import { NextFunction, Request, Response } from "express";
+import { Request, Response } from "express";
 import EmailUser from "../models/User";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { CustomError } from "../utils/error/customError";
-import { StandardResponse } from "../utils/error/stnadardResponse";
+import { StandardResponse } from "../utils/stnadardResponse";
 import { generateOTP, transporter } from "../services/emailAuthService";
+import { generateTokens, setTokenCookies } from "../services/tokenService";
+import {
+  generateResendOtpEmail,
+  generateVerificationEmail,
+} from "../utils/emailTemplates";
 
 dotenv.config();
 
-const generateTokens = (user: any) => {
-  const accessToken = jwt.sign(
-    { userId: user._id, email: user.email },
-    process.env.JWT_SECRET || "",
-    { expiresIn: "15m" }
-  );
-
-  const refreshToken = jwt.sign(
-    { userId: user._id },
-    process.env.REFRESH_TOKEN_SECRET || "",
-    { expiresIn: "7d" }
-  );
-
-  return { accessToken, refreshToken };
-};
-
-const setTokenCookies = (
-  res: Response,
-  accessToken: string,
-  refreshToken: string
-) => {
-  res.cookie("accessToken", accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 15 * 60 * 1000,
-  });
-
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: "/api/auth/refresh",
-  });
-};
-
-export const getUser = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const getUser = async (req: Request, res: Response) => {
   const token = req.cookies.accessToken;
   if (!token) throw new CustomError("Unauthorized", 401);
 
@@ -86,24 +50,7 @@ export const registerWithEmail = async (req: Request, res: Response) => {
     from: process.env.EMAIL_USER,
     to: email,
     subject: "Your Verification OTP",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <h2 style="color: #333; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 10px;">Email Verification</h2>
-        <p>Hello,</p>
-        <p>Thank you for registering. Please use the following verification code:</p>
-        <div style="background-color: #f5f5f5; padding: 15px; text-align: center; border-radius: 4px; margin: 20px 0;">
-          <h1 style="color: #2c7be5; font-size: 32px; letter-spacing: 6px; margin: 0;">${otp}</h1>
-          <p style="color: #777; margin-top: 10px; font-size: 14px;">This code will expire in ${
-            process.env.OTP_EXPIRY || 5
-          } minutes</p>
-        </div>
-        <p>If you did not request this verification, please ignore this email.</p>
-        <p>Best regards,<br>The Support Team</p>
-        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; text-align: center; font-size: 12px; color: #777;">
-          <p>This is an automated message, please do not reply.</p>
-        </div>
-      </div>
-    `,
+    html: generateVerificationEmail(otp),
   });
 
   const response = {
@@ -174,19 +121,7 @@ export const resendOtp = async (req: Request, res: Response) => {
     from: process.env.EMAIL_USER,
     to: email,
     subject: "Resend Verification OTP",
-    html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h2 style="color: #333; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 10px;">Resend OTP</h2>
-          <p>Hello,</p>
-          <p>Here is your new verification code:</p>
-          <div style="background-color: #f5f5f5; padding: 15px; text-align: center; border-radius: 4px; margin: 20px 0;">
-            <h1 style="color: #2c7be5; font-size: 32px; letter-spacing: 6px; margin: 0;">${otp}</h1>
-            <p style="color: #777; margin-top: 10px; font-size: 14px;">This code will expire in 5 minutes</p>
-          </div>
-          <p>If you did not request this, please ignore this email.</p>
-          <p>Best regards,<br>The Support Team</p>
-        </div>
-      `,
+    html: generateResendOtpEmail(otp),
   });
 
   res
@@ -230,72 +165,54 @@ export const refreshToken = async (req: Request, res: Response) => {
     throw new CustomError("Refresh token not found", 401);
   }
 
-  try {
-    const decoded = jwt.verify(
-      refreshToken,
-      process.env.REFRESH_TOKEN_SECRET || ""
-    ) as jwt.JwtPayload;
+  const decoded = jwt.verify(
+    refreshToken,
+    process.env.REFRESH_TOKEN_SECRET || ""
+  ) as jwt.JwtPayload;
 
-    const user = await EmailUser.findById(decoded.userId);
-    if (!user) {
-      throw new CustomError("User not found", 404);
-    }
-
-    const isValidRefreshToken = await bcrypt.compare(
-      refreshToken,
-      user.refreshToken || ""
-    );
-    if (!isValidRefreshToken) {
-      throw new CustomError("Invalid refresh token", 401);
-    }
-
-    const tokens = generateTokens(user);
-
-    const newRefreshTokenHash = await bcrypt.hash(tokens.refreshToken, 10);
-    user.refreshToken = newRefreshTokenHash;
-    await user.save();
-
-    setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
-
-    res
-      .status(200)
-      .json(new StandardResponse("Token refreshed successfully", {}));
-  } catch (error) {
-    res.cookie("accessToken", "", { maxAge: 0 });
-    res.cookie("refreshToken", "", { maxAge: 0 });
-
-    if (error instanceof jwt.JsonWebTokenError) {
-      throw new CustomError("Invalid or expired refresh token", 401);
-    }
-    throw error;
+  const user = await EmailUser.findById(decoded.userId);
+  if (!user) {
+    throw new CustomError("User not found", 404);
   }
+
+  const isValidRefreshToken = await bcrypt.compare(
+    refreshToken,
+    user.refreshToken || ""
+  );
+  if (!isValidRefreshToken) {
+    throw new CustomError("Invalid refresh token", 401);
+  }
+
+  const tokens = generateTokens(user);
+
+  const newRefreshTokenHash = await bcrypt.hash(tokens.refreshToken, 10);
+  user.refreshToken = newRefreshTokenHash;
+  await user.save();
+
+  setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
+
+  res
+    .status(200)
+    .json(new StandardResponse("Token refreshed successfully", {}));
 };
 
 export const logout = async (req: Request, res: Response) => {
-  try {
-    const accessToken = req.cookies.accessToken;
-    if (accessToken) {
-      try {
-        const decoded = jwt.verify(
-          accessToken,
-          process.env.JWT_SECRET || ""
-        ) as jwt.JwtPayload;
+  const accessToken = req.cookies.accessToken;
+  if (accessToken) {
+    const decoded = jwt.verify(
+      accessToken,
+      process.env.JWT_SECRET || ""
+    ) as jwt.JwtPayload;
 
-        const user = await EmailUser.findById(decoded.userId);
-        if (user) {
-          user.refreshToken = undefined;
-          await user.save();
-        }
-      } catch (error) {
-        console.log("Token verification failed during logout");
-      }
+    const user = await EmailUser.findById(decoded.userId);
+    if (user) {
+      user.refreshToken = undefined;
+      await user.save();
     }
-
-    res.cookie("accessToken", "", { maxAge: 0 });
-    res.cookie("refreshToken", "", { maxAge: 0, path: "/api/auth/refresh" });
-
-    res.status(200).json(new StandardResponse("Logged out successfully", {}));
-  } catch (error) {
-    throw new CustomError("Logout failed", 500);
   }
+
+  res.cookie("accessToken", "", { maxAge: 0 });
+  res.cookie("refreshToken", "", { maxAge: 0, path: "/api/auth/refresh" });
+
+  res.status(200).json(new StandardResponse("Logged out successfully", {}));
 };
