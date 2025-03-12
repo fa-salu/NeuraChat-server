@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 import EmailUser from "../models/User";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
@@ -44,6 +44,24 @@ const setTokenCookies = (
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: "/api/auth/refresh",
   });
+};
+
+export const getUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const token = req.cookies.accessToken;
+  if (!token) throw new CustomError("Unauthorized", 401);
+
+  const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "");
+  const user = await EmailUser.findById(decoded.userId).select(
+    "-password -refreshToken"
+  );
+
+  if (!user) throw new CustomError("User not found", 404);
+
+  res.status(200).json(new StandardResponse("User details fetched", { user }));
 };
 
 export const registerWithEmail = async (req: Request, res: Response) => {
