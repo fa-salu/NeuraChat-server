@@ -82,11 +82,9 @@ export const verifyEmailOtp = async (req: Request, res: Response) => {
   user.otp = undefined;
   user.otpExpiry = undefined;
 
-  const { accessToken, refreshToken } = generateTokens(user);
-
-  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
-  user.refreshToken = refreshTokenHash;
   await user.save();
+
+  const { accessToken, refreshToken } = generateTokens(user);
 
   setTokenCookies(res, accessToken, refreshToken);
 
@@ -142,10 +140,6 @@ export const login = async (req: Request, res: Response) => {
 
   const { accessToken, refreshToken } = generateTokens(user);
 
-  const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
-  user.refreshToken = refreshTokenHash;
-  await user.save();
-
   setTokenCookies(res, accessToken, refreshToken);
 
   const response = {
@@ -162,6 +156,7 @@ export const login = async (req: Request, res: Response) => {
 
 export const refreshToken = async (req: Request, res: Response) => {
   const refreshToken = req.cookies.refreshToken;
+  console.log("re", refreshToken);
 
   if (!refreshToken) {
     throw new CustomError("Refresh token not found", 401);
@@ -177,19 +172,7 @@ export const refreshToken = async (req: Request, res: Response) => {
     throw new CustomError("User not found", 404);
   }
 
-  const isValidRefreshToken = await bcrypt.compare(
-    refreshToken,
-    user.refreshToken || ""
-  );
-  if (!isValidRefreshToken) {
-    throw new CustomError("Invalid refresh token", 401);
-  }
-
   const tokens = generateTokens(user);
-
-  const newRefreshTokenHash = await bcrypt.hash(tokens.refreshToken, 10);
-  user.refreshToken = newRefreshTokenHash;
-  await user.save();
 
   setTokenCookies(res, tokens.accessToken, tokens.refreshToken);
 
@@ -206,11 +189,11 @@ export const logout = async (req: Request, res: Response) => {
       process.env.JWT_SECRET || ""
     ) as jwt.JwtPayload;
 
-    const user = await EmailUser.findById(decoded.userId);
-    if (user) {
-      user.refreshToken = undefined;
-      await user.save();
-    }
+    // const user = await EmailUser.findById(decoded.userId);
+    // if (user) {
+    //   user.refreshToken = undefined;
+    //   await user.save();
+    // }
   }
 
   res.cookie("accessToken", "", { maxAge: 0 });
